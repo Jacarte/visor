@@ -1,0 +1,1 @@
+export const INDEX_LIMITS = { files: 2000, entries: 20000, directoryDepth: 32, fileBytes: 1024 * 1024, totalBytes: 32 * 1024 * 1024, frontmatterBytes: 64 * 1024, yamlNodes: 4096, yamlDepth: 24, concurrency: 1 } as const;

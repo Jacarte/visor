@@ -4,3 +4,6 @@ test-results/
 playwright-report/
 .vite/
 .npm-cache/
+build/
+release/
+.electron-cache/

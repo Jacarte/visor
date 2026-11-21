@@ -1,4 +1,15 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+async function panFromBlankCanvas(page: Page) {
+  const point = await page.locator('.visor-canvas').evaluate(canvas => {
+    const box = canvas.getBoundingClientRect();
+    for (const y of [.85, .65, .35, .15]) for (const x of [.9, .7, .4, .2]) {
+      const point = { x: box.x + box.width * x, y: box.y + box.height * y };
+      if (document.elementFromPoint(point.x, point.y)?.classList.contains('react-flow__pane')) return point;
+    }
+    throw new Error('No exposed canvas pane for pan regression');
+  });
+  await page.mouse.move(point.x, point.y); await page.mouse.down(); await page.mouse.move(point.x - 80, point.y - 35, { steps: 8 }); await page.mouse.up();
+}
 test('real graph UI: full history, conservative readiness, filters and read-only preview', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
@@ -42,8 +53,7 @@ test('drag, pan, zoom, reset and irrelevant refresh preserve temporary state', a
   await expect(node).toHaveClass(/selected/); await expect(viewport).toHaveAttribute('style', transform!);
   await page.getByRole('button', { name: 'Zoom In', exact: true }).click(); await expect.poll(() => viewport.getAttribute('style')).not.toBe(transform);
   const zoomed = await viewport.getAttribute('style');
-  const canvas = (await page.locator('.visor-canvas').boundingBox())!;
-  await page.mouse.move(canvas.x + canvas.width - 20, canvas.y + canvas.height - 30); await page.mouse.down(); await page.mouse.move(canvas.x + canvas.width - 100, canvas.y + canvas.height - 65, { steps: 8 }); await page.mouse.up();
+  await panFromBlankCanvas(page);
   await expect.poll(() => viewport.getAttribute('style')).not.toBe(zoomed);
   await page.getByRole('button', { name: 'Reset layout' }).click(); await expect(node).toHaveAttribute('style', style!);
 });
@@ -63,9 +73,7 @@ test('live structural arrivals preserve the user camera and selected preview wit
   const viewport = page.locator('.react-flow__viewport');
   await page.getByRole('button', { name: 'Zoom In', exact: true }).click();
   await page.waitForTimeout(350);
-  const canvas = (await page.locator('.visor-canvas').boundingBox())!;
-  await page.mouse.move(canvas.x + canvas.width - 20, canvas.y + canvas.height - 30);
-  await page.mouse.down(); await page.mouse.move(canvas.x + canvas.width - 100, canvas.y + canvas.height - 65, { steps: 8 }); await page.mouse.up();
+  await panFromBlankCanvas(page);
   const camera = await viewport.getAttribute('style');
   for (let i = 1; i <= 3; i++) {
     await page.getByRole('button', { name: 'Note arrives', exact: true }).click();
@@ -122,4 +130,46 @@ test('automatic fit occurs on map change, while Fit and Reset remain explicit ca
   const beforeReset = await viewport.getAttribute('style');
   await page.getByRole('button', { name: 'Reset layout', exact: true }).click();
   await expect.poll(() => viewport.getAttribute('style')).not.toBe(beforeReset);
+});
+
+test('selected endpoint edges do not intercept an overlapping node, and exposed edges stay selectable', async ({ page }, testInfo) => {
+  await page.goto('/?edge-overlap');
+  await expect(page.locator('.visor-node')).toHaveCount(3);
+  const a = page.locator('.react-flow__node[data-id="Overlap/A.md"]');
+  const c = page.locator('.react-flow__node[data-id="Overlap/C.md"]');
+  const edge = page.locator('.react-flow__edge[data-id=\'["folder","Overlap/A.md","Overlap/B.md"]\']');
+  const interaction = edge.locator('.react-flow__edge-interaction');
+  await expect(interaction).toBeAttached();
+  // Read the real rendered route; move C through normal pointer dragging, not Flow internals or CSS.
+  const geometry = await interaction.evaluate(path => {
+    const svg = path as SVGPathElement;
+    const screen = (fraction: number) => {
+      const p = svg.getPointAtLength(svg.getTotalLength() * fraction).matrixTransform(svg.getScreenCTM()!);
+      return { x: p.x, y: p.y };
+    };
+    return { crossing: screen(.35), exposed: screen(.75), route: svg.getAttribute('d') };
+  });
+  const before = (await c.boundingBox())!;
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(before.x + before.width / 2 + 5, before.y + before.height / 2);
+  await page.mouse.move(geometry.crossing.x, geometry.crossing.y, { steps: 12 }); await page.mouse.up();
+  await expect.poll(async () => {
+    const box = (await c.boundingBox())!;
+    return Math.hypot(box.x + box.width / 2 - geometry.crossing.x, box.y + box.height / 2 - geometry.crossing.y);
+  }).toBeLessThan(8);
+  await a.click();
+  await expect(a).toHaveClass(/selected/); await expect(c).not.toHaveClass(/selected/);
+  await expect(page.locator('.visor-markdown')).toContainText('Overlap/A.md');
+  const hit = await page.evaluate(point => {
+    const element = document.elementFromPoint(point.x, point.y);
+    return { tag: element?.tagName, class: element?.getAttribute('class'), edgeStyle: element?.closest('.react-flow__edge')?.getAttribute('style') };
+  }, geometry.crossing);
+  await testInfo.attach('overlapping-edge-hit-test', { body: JSON.stringify({ ...geometry, hit }), contentType: 'application/json' });
+  const box = (await c.boundingBox())!;
+  await c.click({ position: { x: geometry.crossing.x - box.x, y: geometry.crossing.y - box.y }, timeout: 3000 });
+  await expect(c).toHaveClass(/selected/);
+  await expect(page.locator('.visor-markdown')).toContainText('Overlap/C.md');
+  await page.mouse.click(geometry.exposed.x, geometry.exposed.y);
+  await expect(edge).toHaveClass(/selected/);
 });

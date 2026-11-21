@@ -34,6 +34,7 @@ function Preview({ node, services, revision }: { node?: GraphNode; services: Pre
   const container = useRef<HTMLDivElement>(null); const [error, setError] = useState('');
   useEffect(() => {
     setError('');
+    services.selectionChanged?.(node?.id);
     if (!node?.destination || !container.current) return;
     return mountPreview(services, node.destination, container.current, setError);
   }, [node?.id, node?.destination?.linktext, services, revision]);
@@ -92,7 +93,7 @@ function Canvas({ source, preview, revision }: GraphAppProps) {
     <header className="visor-toolbar">
       <strong>Visor</strong><span className="visor-readonly">Read only · local</span>
       <label>Map <select aria-label="Map" value={selectedMap} onChange={e => { setMap(e.target.value); setSelectedId(undefined); }}>
-        {!discovery.maps.length && <option value="">No maps indexed</option>}{discovery.maps.map(m => <option key={m.path} value={m.path}>{m.path}</option>)}</select></label>
+        {!discovery.maps.length && <option value="">No maps indexed</option>}{discovery.maps.map(m => <option key={m.path} value={m.path}>{m.title} · {m.path}</option>)}</select></label>
       <label>Search <input aria-label="Search" placeholder="Title or path" value={search} onChange={e => setSearch(e.target.value)} /></label>
       <label>Type <select aria-label="Type" value={type} onChange={e => setType(e.target.value)}><option value="all">All types</option>{ticketTypes.map(t => <option key={t}>{t}</option>)}<option value="implementation">Implementation</option><option value="support">Note / support</option></select></label>
       <label>Status <select aria-label="Status" value={status} onChange={e => setStatus(e.target.value)}>
@@ -113,9 +114,9 @@ function Canvas({ source, preview, revision }: GraphAppProps) {
           setNodes(old => allowed.applyTo(old));
         }}
         onEdgesChange={changes => { const allowed = new EdgeChangeset(changes.toArray().filter(c => c.type === 'select')); setEdges(old => allowed.applyTo(old)); }}
-        onNodeClick={(_, node) => { setSelectedId(node.id); if (node.data.record.kind === 'type') setType(node.data.record.title); }}
+        onNodeClick={(_, node) => { if (node.id === selectedId && node.data.record.destination) preview.open(node.data.record.destination, false); setSelectedId(node.id); if (node.data.record.kind === 'type') setType(node.data.record.title); }}
         nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null} onBeforeDelete={async () => false}
-        nodesDraggable elementsSelectable panOnDrag zoomOnScroll zoomOnPinch minZoom={0.08} maxZoom={2.5}>
+        nodesDraggable elementsSelectable elevateEdgesOnSelect={false} panOnDrag zoomOnScroll zoomOnPinch minZoom={0.08} maxZoom={2.5}>
         <Background /><Controls showInteractive={false} />
       </ReactFlow>
     </div><Preview node={selected} services={preview} revision={revision} /></div>

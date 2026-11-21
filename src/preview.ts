@@ -1,6 +1,7 @@
 import type { Destination } from './model';
 export interface PreviewSession { ready: Promise<void>; dispose(): void }
 export interface PreviewServices {
+  selectionChanged?(id: string | undefined): void;
   render(destination: Destination, host: HTMLElement): PreviewSession;
   open(destination: Destination, newLeaf: boolean): void;
 }

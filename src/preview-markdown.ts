@@ -3,7 +3,7 @@ import remarkParse from 'remark-parse';
 import type { Node } from 'unist';
 const parser = unified().use(remarkParse);
 /** Tokenize first so code examples and escaped embeds remain text, not preview resources. */
-export function previewMarkdown(markdown: string, allowLink?: (linktext: string) => boolean): { markdown: string; omitted: boolean } {
+export function previewMarkdown(markdown: string, allowLink?: (linktext: string) => boolean, allowWikiSpan?: (span: string) => boolean, sourcePositions?: Map<number, number>): { markdown: string; omitted: boolean } {
   const tree = parser.parse(markdown);
   type Span = { start: number; end: number };
   type Edit = Span & { text: string };
@@ -69,7 +69,7 @@ export function previewMarkdown(markdown: string, allowLink?: (linktext: string)
     if (destinationSyntax.some(span => start < span.end && span.start < end &&
       !(span.link && start <= span.link.start && span.link.end <= end))) continue;
     const linktext = markdown.slice(start + match[0].length, close).split('|')[0];
-    if (embed || (allowLink && !allowLink(linktext))) {
+    if (embed || (allowLink && !allowLink(linktext)) || (allowWikiSpan && !allowWikiSpan(markdown.slice(start, end)))) {
       edits.push({ start, end, text: embed ? '[Note embed omitted in Visor preview]' : codeText(markdown.slice(start, end)) });
     }
   }
@@ -88,6 +88,11 @@ export function previewMarkdown(markdown: string, allowLink?: (linktext: string)
         previous.end = edit.end; previous.text = codeText(markdown.slice(previous.start, previous.end));
       }
     } else disjoint.push(edit);
+  }
+  // Edit starts can remain heading starts; only strictly interior source identities are removed.
+  for (const position of sourcePositions?.keys() ?? []) {
+    if (disjoint.some(edit => edit.start < position && position < edit.end)) sourcePositions!.delete(position);
+    else sourcePositions!.set(position, position + disjoint.filter(edit => edit.end <= position).reduce((shift, edit) => shift + edit.text.length - (edit.end - edit.start), 0));
   }
   let output = markdown;
   for (const edit of disjoint.reverse()) output = output.slice(0, edit.start) + edit.text + output.slice(edit.end);

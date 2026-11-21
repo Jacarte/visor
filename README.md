@@ -1,92 +1,123 @@
-# Visor
+# Visor 0.2.0
 
-A personal, offline/local **read-only graph viewer** for Wayfinder maps and their project-folder Markdown artifacts. No accounts, GitHub integration, telemetry, ticket editing, or saved positions. Desktop only. Current verification target: **Obsidian 1.15.0** (installer 1.12.7 is not the running app version). Host loading/activation is a separate check from the browser harness; it is not certified by a successful build.
+A standalone, local **read-only Electron app** for Wayfinder project folders. No Obsidian installation, plugin, development server, account or network service is needed.
 
-## Build and check
+## Launch on this Mac
 
-Use the existing Node 24 installation via nvm before **every** npm/npx command; do not change the global default:
+Requires macOS 13+ and Node 24 for building. Dependencies and binaries are project-local and exactly locked.
 
 ```sh
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+cd /Users/javcab/Documents/visor
+source ~/.nvm/nvm.sh --no-use
 nvm use 24
-node --version
-npm ci --ignore-scripts --cache .npm-cache
-npm test
+npm start
+```
+
+`npm start` builds the static application, then launches the pinned Electron runtime. Click **Open Folder…**, use **File → Open Folder…**, or press **⌘O**. Choose a project folder containing a note with `labels: wayfinder:map` (a string or YAML string list). Multiple maps appear in the Map selector. No last-folder auto-open or source-folder settings are stored. **Refresh** reindexes manually; local filesystem changes also refresh automatically.
+
+To install dependencies in a fresh checkout, use the same nvm setup, then `npm ci --cache .npm-cache`. If npm's script policy skips Electron's download, run `ELECTRON_CACHE="$PWD/.electron-cache" node node_modules/electron/install.js` (the installed, pinned package's own installer, not a global binary).
+
+## Local `.app`
+
+```sh
+source ~/.nvm/nvm.sh --no-use
+nvm use 24
+npm run package
+open release/Visor-darwin-x64/Visor.app
+```
+
+Output: **`/Users/javcab/Documents/visor/release/Visor-darwin-x64/Visor.app`**. The current packaging target is macOS x64, matching the tested runtime binary. No ARM-hardware claim is made. No DMG, administrator privileges, Developer-ID signing, notarization or security-policy changes are required by this build. Packager's default ASAR/integrity/ad-hoc internals are retained; distribution/Gatekeeper acceptance on other machines is not promised.
+
+Packaging stages only compiled main/Markdown-worker/preload/renderer assets, a minimal package manifest and required license/notice files in `build/app`. The working tree, node_modules, tests, fixture notes and selected source folder are **not** copied into the app. Electron/Chromium notices remain in the runtime distribution; bundled dependency notices are under `licenses/`.
+
+Optional explicit startup selection (same canonical-root validation as the native dialog):
+
+```sh
+release/Visor-darwin-x64/Visor.app/Contents/MacOS/Visor --folder=/absolute/project/folder
+```
+
+## What the map means
+
+- Node IDs are folder-relative Markdown paths; titles use frontmatter `title`, otherwise the filename. Labels/aliases never replace identity.
+- Every permitted Markdown artifact in the selected map's directory and descendants is included, including unlabelled specifications, handoffs, indexes and nested generic notes. Folder context is distinct from decision membership.
+- Only `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling` and `wayfinder:task` with a matching explicit `parent: "[[Map]]"` are decision members.
+- `blocked-by` is the only dependency authority. Use `[]` for none. Prerequisite arrows point toward dependents. Missing, malformed or unavailable dependencies never imply satisfaction.
+- Frontier means open, unassigned and all direct blockers closed/done. Assigned/unblocked is separate. SCC/self cycles and unknown metadata stay unknown. Dependencies outside decision membership are not recursively traversed.
+- `implementation:ticket` / `implementation-ticket` compatibility artifacts and ordinary support notes have no inferred execution readiness merely from their tag/type. Type colors, closed/done fading and dimming filters retain the existing graph semantics.
+- One-hop wiki references from map, decision and folder artifacts add context; outside references are not recursively expanded. YAML wiki references retain their field provenance; parent/blocker references are not duplicated as generic context.
+- Pan, zoom, selected nodes and temporary dragging are local UI state. Updates preserve the camera and selection. Only initial/map selection, Fit and Reset fit the camera. Nothing is written back.
+
+## Read-only Markdown
+
+Select a node to preview headings, tables, lists, blockquotes, code highlighting and **disabled** task boxes. Unknown code languages fall back to escaped code. Internal links stay in the preview across live revisions and Refresh; deleting the current note shows it as unavailable instead of jumping to the graph selection. Re-clicking a selected graph node returns to that artifact. “Open note” focuses it in the preview, not an editor. There is no note save/create/rename/delete, writable task box or graph-domain editing.
+
+Images (including references), wiki embeds/transclusions and automatic media are omitted. Raw HTML is inert text or skipped. There is no MDX, raw-HTML plugin, executable diagram renderer, remote font/CDN or note-controlled script. Preview notices explain omissions and unavailable links. Styled blockquotes retain callout marker text; full Obsidian callout syntax is not implemented.
+
+### Deliberately narrow links
+
+Authored Markdown links use a **single shared resolver** for the index-backed graph and preview policy:
+
+1. Source-relative exact path;
+2. Exact folder-root-relative path;
+3. Unique basename (only for a basename target).
+
+Generated graph destinations instead use their already-known canonical note ID directly; identity is never reinterpreted as authored relative text. Matching is case-sensitive; extensionless authored targets use `.md`. Parent segments may resolve only within the chosen root. Missing/ambiguous, excluded, malformed, outside-folder or unsafe-encoded targets are inert, never file-creation requests. No fuzzy/suffix/vault-wide Obsidian matching is attempted. Headings use deterministic `heading-…` IDs (duplicates receive `-1`, `-2`, etc.); links can use heading text or those IDs. A block reference is active only for an actual paragraph-ending `^block-id`; other block syntax is unavailable. Heading identities follow original source positions through sanitization, not changed display text. Final rendered anchor IDs are validated; an unavailable graph-reference anchor is explicitly reported rather than guessed.
+
+The retained protected-source-range sanitizer runs **before** the new wiki/GFM parser; malformed/nested aliases cannot reactivate embedded CommonMark links. Wiki aliases are plain strings, not recursively formatted Markdown. The wiki-aware GFM wrapper protects wiki pipes in tables; its documented shape-level table boundaries are not exact stock-GFM/Obsidian parity. Package-generated URLs/HTML handlers are never trusted: all final parsed destinations are rebuilt from known IDs, rendering metadata is discarded, and embeds are removed before HAST.
+
+Only a deliberate link click requests main-process `shell.openExternal`, after validating `http:`, `https:` or `mailto:`. File/data/javascript/custom protocols, popups and automatic external opening are denied. This is not a claim that IPC can prove a physical user gesture after total renderer compromise.
+
+## Filesystem and process boundary
+
+Main owns the native-dialog-selected **canonical root**, indexing coordination, selected-note reads and watcher. A single terminable trusted worker receives bounded content and immutable known IDs/anchors, never filesystem paths to read or commands to execute. YAML parsing, link/heading extraction, the full preview sanitizer/parser pipeline, highlighting and final HAST policy run there, not in main or the renderer. Renderer has no Node/fs/raw IPC or renderer-selected root/path-reading API. The tiny sandboxed preload exports only `chooseFolder`, `getSnapshot`, `readNote(knownID,generation)`, `onUpdate` (with unsubscribe) and validated `openExternal`.
+
+Private `chats` and `Javier(me) notes` path components are excluded case-insensitively, **including canonical absolute ancestors of the selected root**. Selecting a private directory directly or via an alias cannot bypass this rule. Symlinks/descendants, devices and FIFOs are skipped. `.git`, `.obsidian` and `node_modules` directories are not crawled. Reads validate path-component containment, canonical identity, regular file handles, read-only/no-follow opens and post-read identity. Unknown/stale IDs are denied. This is defense in depth, **not** an OS-enforced read-only sandbox or hostile-filesystem race-proof guarantee.
+
+Indexing necessarily reads bounded Markdown bodies to derive metadata and links. Only the selected preview body and bounded prepared HAST (or explicit plain-text fallback) cross IPC; the snapshot contains metadata, paths, headings/blocks and issues, not every body. Each fresh read is prepared with its exact body and generation/revision; an old successful index parse is not a formatting certificate. The renderer only converts validated HAST to React elements and never reparses Markdown. Concrete limits:
+
+| Work | Limit |
+| --- | --- |
+| Markdown files | 2,000 |
+| Directory entries / depth | 20,000 / 32 |
+| Per-file / aggregate indexed bytes | 1 MiB / 32 MiB |
+| Rich Markdown parsing | 256 Ki characters, 30,000 AST nodes, depth 64 |
+| Frontmatter | 64 KiB, 4,096 YAML nodes, depth 24 |
+| Index concurrency | 1 scan, coalesced dirty flag (no unbounded queue) |
+| Worker concurrency / queued jobs | 1 worker shared across window/root lifetimes / 2 queued jobs |
+| Parsing deadline | 1.2 s metadata job / 3 s complete preview job |
+| Coalesced indexing deadline | 8 s shared across dirty rescans |
+| Prepared preview output | 30,000 nodes, depth 64, 1 Mi characters text, 2 Mi characters serialized |
+| Projected metadata list / string | 256 entries / 4,096 characters |
+
+YAML is core-schema data only, with unique string keys, no tags/anchors/aliases/merge/evaluation. Invalid, excessive, unreadable and disappearing records are reported as unavailable/unknown; truncation is visible. Errors/timeouts publish unavailable metadata and clear notices; affected previews bypass every parser, sanitizer and highlighter and show capped escaped plain text. A job deadline terminates its worker, and cancellation settles obsolete queued/inflight jobs before a replacement worker starts. Byte/structure limits alone would not bound hostile parser CPU time. Filesystem operations and worker termination can add latency beyond the indexing deadline; rendering a valid bounded tree still costs UI time. Index issues are summarized (first 100). On cloud/network filesystems, watching is best effort: watcher filenames (including null) only invalidate the index; they never authorize a read. Manual Refresh remains available. Generation/revision reconciliation drops stale responses; old watchers close on root change/window close.
+
+Electron runs with contextIsolation/sandbox/webSecurity on and Node integration/webviews off. Exact main-frame identity, origin, app URL and argument schemas are checked on every IPC request and rechecked after awaits. The static `app://bundle` origin serves only three allowlisted built assets via GET/HEAD, never note HTML/JS. CSP denies network connections/frames/objects and inline/eval scripts; only style attributes are allowed inline for ReactFlow geometry. Permissions, downloads, navigations, frames and popups are denied.
+
+Chromium userData/cache/logs live outside selected folders; selecting overlapping app/build/cache locations is refused. The app does not modify selected files, including hidden settings. It does write ordinary Electron state outside them. Do not place a custom Electron user-data directory inside a source folder.
+
+## Validation
+
+All tests use disposable temporary folders, never a real vault. Run after the nvm setup above:
+
+```sh
 npm run typecheck
+npm test
 npm run build
+npm run test:wiki:production
+npm run test:wiki:development
+# First browser-test setup only (download stays project-local):
+PLAYWRIGHT_BROWSERS_PATH="$PWD/build/playwright" node node_modules/@playwright/test/cli.js install chromium --only-shell
+PLAYWRIGHT_BROWSERS_PATH="$PWD/build/playwright" npm run test:ui
+npm run test:electron
+npm run package
+npm run test:package
+VISOR_EXECUTABLE="$PWD/release/Visor-darwin-x64/Visor.app/Contents/MacOS/Visor" npm run test:electron
 ```
 
-Exact versions are pinned in `package.json` and `package-lock.json`. Build outputs are `main.js` (CommonJS, Obsidian/host modules external; React/React Flow bundled), `styles.css` (full React Flow CSS plus Visor styles), and `manifest.json`. No harness or test code is shipped in the plugin bundle.
+The 52 host-neutral baseline tests remain; Obsidian adapter/view/mock and plugin-installer tests were retired in favor of real filesystem/YAML/watch, resolver, IPC policy and final Markdown DOM tests. Browser regressions still exercise the real GraphApp. Actual Electron automation tests the built main/preload/renderer and packaged executable from an unrelated cwd, with main-only native-dialog/external-open stubs, isolation/CSP/IPC denial checks, no media network requests, live refresh/camera stability and unchanged fixture hashes including hidden files/nonwritable folders. Adversarial Electron regressions also exercise the three reported parser inputs, main-loop heartbeats, fast healthy-root switching, bounded real worker lifetimes across cancellation/close/reopen, fresh unsafe content after a safe index, aggregate deadlines, and a nicely formatted 63,690-character specification. Navigation regressions cover revision preservation, transformed heading IDs/actual scroll targets and nested canonical graph destinations. The packaged worker is loaded from ASAR. Test stubs are not production IPC capabilities.
 
-## Local installation (explicit, not automatic)
+### Recorded stress-test caveat
 
-After reviewing and checking the exact build artifacts, place **only** `main.js`, `manifest.json`, and `styles.css` in a previously absent `<vault>/.obsidian/plugins/visor/`. Or run this optional artifact-only installer from the project directory:
+One adversarial unit run on host Node 24.18.1 aborted with a native heap-limit error. Later unit runs, targeted allocation/parser probes on both host Node and Electron's bundled Node 24.22.3, and packaged Electron checks passed without reproducing a supervisor crash. The initial failure remains unexplained; these checks do not prove universal native-OOM containment.
 
-```sh
-# Uses Node 24 selected above. Do not run before artifact review.
-node scripts/install.mjs /absolute/path/to/vault
-```
-
-The installer requires an existing `.obsidian/plugins` directory. It rejects target collisions and symlink ancestors, exclusively creates `visor`, verifies SHA-256 and sizes, and reports them. On error it removes only newly owned, unchanged completed files; changed/uncertain files and unexpected files are retained and reported. It never writes `community-plugins.json`, autoenables, overwrites an existing installation, quits/restarts Obsidian, or changes Restricted mode. Concurrent hostile filesystem replacement is not an OS-level sandbox; stop other installation writers.
-
-Enable **Visor alone** in Obsidian's Community plugins UI (Restricted mode must already permit plugins). An authorized operator can alternatively use the public CLI `plugin:enable id=visor filter=community` scoped to the intended vault if CLI is already enabled. Do not edit the live enabled-plugin JSON or reload all plugins. Open **Visor: Open graph** from the command palette, or its network ribbon icon; an existing Visor leaf is revealed instead of duplicated.
-
-## Notes and graph
-
-Maps have `labels: ["wayfinder:map"]`. Choose one map in the toolbar. All allowed Markdown files in that map's folder tree (including nested project folders) are visible, even without labels: specs, handoffs, glossary, conventions, working notes and indexes appear as generic note/support artifacts, without guessing meaning from filenames. A folder prefix never includes similarly named sibling folders. A root-level map includes the allowed vault Markdown tree. Cache-null folder notes appear as indexing/unavailable artifacts and update under the same canonical path when indexed.
-
-Actual decision child tickets can still live in any allowed folder:
-
-```yaml
-labels: ["wayfinder:research"] # research, prototype, grilling, or task
-parent: "[[Folder/Map|Map title]]"
-status: open # closed and done are terminal
-assignee: null # or an assignee string
-blocked-by:
-  - "[[Folder/Prerequisite#Heading|Prerequisite]]"
-```
-
-`type: permanent` is not a ticket type. Canonical note paths identify nodes; aliases never identify membership. Obsidian's source-aware resolver handles ambiguous basenames and relative links. Headings/block destinations are retained for navigation. Use `blocked-by: []` for no prerequisites; absent/malformed blocker or assignee metadata is conservatively unknown, not ready.
-
-- Full history is shown by default: map header, actual decision children, colored decision type badges, implementation tickets, generic project artifacts, one-hop wikilink context, explicit external blockers, and unresolved-blocker placeholders. Frontmatter `title` (a nonempty string) is displayed; otherwise the basename is used. Paths remain identities.
-- `tags: ["implementation-ticket"]` or `labels: ["implementation:ticket"]` identifies a separate purple implementation kind/filter. Labels and tags accept a scalar string or a list of strings; malformed shapes are not interpreted. A recognized Wayfinder decision label with a parent resolving to the selected map takes precedence, without duplicating the note. `implementation:index` alone remains a generic artifact.
-- Implementation/generic artifacts display stored status; closed/done are faded. Nonterminal readiness stays **unknown**, even with an assignee, `not-started`, or an approved-change label. Missing assignee/blocker fields are fine for these artifacts. Optional explicit `blocked-by` fields add dependency arrows; malformed/unresolved blockers warn and remain unknown. No execution approval or blockers are inferred from prose/wikilinks.
-- Solid arrow: **prerequisite → dependent**, top to bottom. Dashed parent edges are actual selected-map decision membership. Dotted **folder context** edges are project provenance, not fabricated parents; context/type edges are annotations. Folder and stored-parent provenance are shown separately in the preview. Foreign/malformed/absent parents do not hide folder artifacts or make them selected-map decisions. Other maps in the folder remain visible without claiming their children. Only explicit dependencies determine dependency ranks.
-- Closed/done nodes are faded. **Frontier** means open + no assignee + every direct blocker closed/done. Assigned/unblocked is separate. Missing metadata, bad blockers, unknown status and cycles produce warnings; there is no false-ready assumption while indexing.
-- Search/type/status filters **dim** nonmatching note artifacts rather than hide blockers; the original readiness does not change. Click a type badge to filter; it is not a note.
-- Click a note node to render its Markdown in the side panel. **Open note** uses the public workspace API. Internal links preserve headings/blocks and new-leaf modifiers; external links remain normal links.
-- Drag, pan, zoom, select, Fit and Reset layout are available. Dragging is temporary. Structural changes still auto-layout, but preserve the user's camera and surviving selection/preview. Automatic fit happens only on initial display/map change; Fit and Reset layout are explicit controls. Nonstructural refreshes preserve dragged positions, selection and viewport. There is no list/hybrid view, connection/deletion API, position persistence, or settings UI.
-
-## Read-only and privacy boundary
-
-Runtime code never writes note/config/plugin data, invokes a mutation API, or saves layouts. Membership discovery scans **allowed metadata** vault-wide, without reading note bodies. Visibility includes the selected map's folder tree plus resolved decision children anywhere allowed. One-hop context links originate from all these inputs; directly linked outside references can appear but are never recursively expanded. External blockers supply their own status only. There is no arbitrary vault-wide provenance crawl. Cache-null/indexing states are explicit and refresh on public metadata/vault events after layout readiness (not an arbitrary indexing delay).
-
-`chats/` and `Javier(me) notes/` are excluded (case-insensitive directory segments) **before** cache/body access and explicit link resolution. A bare basename can require the public resolver to identify its destination; a forbidden resolver result is rejected before metadata/body reads or navigation. Forbidden notes cannot be previewed/opened through Visor.
-
-Preview task checkboxes/forms/editable controls are disabled with capture guards. A Markdown tokenizer removes note embeds/transclusions and inline/reference images **from the preview only**, so they cannot auto-read excluded notes or load remote media. Raw HTML and excluded/unresolved internal links are shown as inert code text (before the host renderer can inspect destinations). A concise notice appears when content was omitted/made inert. Ordinary Markdown, code examples, tasks as read-only display, resolved allowed internal links, and normal web links remain. Each preview generation owns its renderer component and detached DOM host; closing/switching disposes it and rejects stale async output. No source text is modified.
-
-This is not an Obsidian security sandbox. Other installed plugins and arbitrary Markdown postprocessors retain their own permissions and behavior. Their side effects cannot be guaranteed safe by Visor. Actual Obsidian renderer integration and split/popout styling need host smoke testing.
-
-## Real UI fixture harness
-
-The harness imports the **same `src/GraphApp.tsx`** used in the plugin, with a fixture metadata/preview adapter instead of Obsidian. It is not a mock graph. Preview fixtures explicitly do **not** claim to emulate Obsidian's MarkdownRenderer.
-
-```sh
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-nvm use 24
-npm run harness
-# http://127.0.0.1:5173/
-```
-
-In a second shell, select nvm 24 again before running npm. With installed Google Chrome:
-
-```sh
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-nvm use 24
-PLAYWRIGHT_CHANNEL=chrome npm run test:ui
-```
-
-Without Chrome, supply an already-installed Playwright browser (`npm run test:ui` uses its Chromium). No browser install or debug-port setup is automatic. UI tests cover actual graph rendering, all types/full history/frontier, generic/implementation artifacts and indexing updates, filters, click/rapid preview switching, readonly DOM, preserved heading/modifier intent, drag/pan/zoom, reset, irrelevant refresh, live structural arrivals with camera/selection stability, map-change fit, delete guards, type badges, and unmount. A focused GraphApp unit test counts layout/fit calls; the browser test reproduces pan/zoom followed by new nodes/context edges. These establish the camera-yank fix, not a measured Obsidian host-lag improvement or host MarkdownRenderer performance. Unit tests exercise pure model/readiness/layout, adapter boundaries, lifecycle/event cleanup and safe installer rollback on temporary fake vaults. These checks do not prove Obsidian host loading. No real-vault installer invocation is part of repository tests.
+This app does not manage Obsidian. The old Visor plugin was disabled separately on the migration host after replacement review and real-folder verification; its installed files were retained for rollback. Other plugins and source notes were left unchanged.

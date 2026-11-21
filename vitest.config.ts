@@ -1,3 +1,2 @@
-import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
-export default defineConfig({ resolve: { alias: { obsidian: fileURLToPath(new URL('./tests/obsidian-mock.ts', import.meta.url)) } }, test: { include: ['tests/**/*.test.ts'], environment: 'node' } });
+export default defineConfig({ test: { globalSetup: ['tests/setup-worker.ts'], include: ['tests/**/*.test.ts'], environment: 'node' } });

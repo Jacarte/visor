@@ -1,4 +1,12 @@
 import type { NoteMetadata, NoteSource } from '../src/model';
+export function edgeOverlapSource(): NoteSource & { arrive(): void } {
+  const records: Record<string, NoteMetadata> = {
+    'Overlap/A.md': { frontmatter: { labels: ['wayfinder:map'] }, links: [] },
+    'Overlap/B.md': { frontmatter: {}, links: [] },
+    'Overlap/C.md': { frontmatter: {}, links: [] }
+  };
+  return { paths: () => Object.keys(records), metadata: path => records[path] ?? null, resolve: () => null, arrive() {} };
+}
 export function fixtureSource(project = false): NoteSource & { arrive(): void } {
   const records: Record<string, NoteMetadata | null> = {};
   const note = (path: string, frontmatter: Record<string, unknown>, links: NoteMetadata['links'] = []) => { records[path] = { frontmatter, links }; };

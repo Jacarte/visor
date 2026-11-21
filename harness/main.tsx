@@ -1,10 +1,11 @@
 import { createRoot } from 'react-dom/client';
 import { GraphApp } from '../src/GraphApp';
-import { fixtureSource } from './fixtures';
+import { edgeOverlapSource, fixtureSource } from './fixtures';
 import { previewMarkdown } from '../src/preview-markdown';
 import type { PreviewServices } from '../src/preview';
 import '../src/styles.css';
-let revision = 0; const source = fixtureSource(new URLSearchParams(location.search).has('project')); const root = createRoot(document.getElementById('root')!);
+const params = new URLSearchParams(location.search);
+let revision = 0; const source = params.has('edge-overlap') ? edgeOverlapSource() : fixtureSource(params.has('project')); const root = createRoot(document.getElementById('root')!);
 const preview: PreviewServices = {
   open(dest, newLeaf) { document.getElementById('navigation')!.textContent = `Opened ${dest.linktext} from ${dest.sourcePath}${newLeaf ? ' in new leaf' : ''}`; },
   render(dest, host) {
@@ -12,7 +13,7 @@ const preview: PreviewServices = {
     const ready = new Promise<void>(resolve => setTimeout(() => {
       if (active) {
         const h = document.createElement('h2'); h.textContent = dest.path;
-        const p = document.createElement('p'); p.textContent = 'Fixture adapter preview. The graph above is the real shipped GraphApp. Obsidian MarkdownRenderer is host-only.';
+        const p = document.createElement('p'); p.textContent = 'Fixture adapter preview. The graph above is the real shipped GraphApp. The standalone Electron preview is tested separately.';
         const task = document.createElement('input'); task.type = 'checkbox'; task.setAttribute('aria-label', 'Preview task');
         const edit = document.createElement('div'); edit.contentEditable = 'true'; edit.textContent = 'Read-only content'; edit.dataset.testid = 'editable-fixture';
         const a = document.createElement('a'); a.href = 'https://example.com'; a.textContent = 'External reference';
