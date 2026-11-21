@@ -1,0 +1,9 @@
+{
+  "id": "visor",
+  "name": "Visor",
+  "version": "0.1.1",
+  "minAppVersion": "1.15.0",
+  "description": "A local, read-only graph viewer for Wayfinder maps and project artifacts.",
+  "author": "Visor",
+  "isDesktopOnly": true
+}
