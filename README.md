@@ -2,6 +2,10 @@
 
 A standalone, local **read-only Electron app** for Wayfinder project folders. No Obsidian installation, plugin, development server, account or network service is needed.
 
+![./docs/general.png](./docs/general.png)
+
+![./docs/deps.png](./docs/deps.png)
+
 ## Launch on this Mac
 
 Requires macOS 13+ and Node 24 for building. Dependencies and binaries are project-local and exactly locked.
