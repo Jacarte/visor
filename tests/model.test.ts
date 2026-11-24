@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { allowedPath, buildGraph, discoverMaps, parseWiki, resolveDestination, structuralKey, type NoteMetadata, type NoteSource } from '../src/model';
+import { allowedPath, buildGraph, discoverMaps, linkedTaskTotals, parseWiki, resolveDestination, structuralKey, ticketProgress, type NoteMetadata, type NoteSource } from '../src/model';
 import { layoutGraph } from '../src/layout';
 const M = 'maps/Map.md';
 function fixture() {
@@ -124,6 +124,36 @@ describe('readiness and partial metadata', () => {
     const other = fixture(); other.ticket('Old'); const a = other.graph();
     other.records['New.md'] = other.records['Old.md']; delete other.records['Old.md'];
     expect(structuralKey(other.graph())).not.toBe(structuralKey(a));
+  });
+});
+describe('progress presentation', () => {
+  it('partitions decision tickets into closed and open readiness buckets, excluding non-decision notes', () => {
+    const f = fixture(); f.ticket('Ready'); f.ticket('Claimed', { assignee: 'Javier' }); f.ticket('Blocked', { 'blocked-by': ['[[Ready]]'] });
+    f.ticket('Done', { status: 'done' }); f.ticket('Weird', { status: 'active' }); f.records['Spec.md'] = { frontmatter: {}, links: [], tasks: { done: 0, total: 4 } };
+    expect(ticketProgress(f.graph())).toEqual({ total: 5, closed: 1, frontier: 1, assigned: 1, blocked: 1, unknown: 1 });
+  });
+  it('sums linked-note checkboxes over distinct context sources, skipping sources without tasks', () => {
+    const f = fixture(); f.records['Spec.md'] = { frontmatter: {}, links: [] }; f.records['Other.md'] = { frontmatter: {}, links: [] }; f.records['Lonely.md'] = { frontmatter: {}, links: [] };
+    f.records[M]!.tasks = { done: 1, total: 2 }; f.records[M]!.links = [{ link: 'Spec', original: '[[Spec]]' }, { link: 'Spec', original: '[[Spec|again]]' }];
+    const t = f.ticket('T', {}, [{ link: 'Spec', original: '[[Spec]]' }, { link: 'Other', original: '[[Other]]' }]); f.records[t]!.tasks = { done: 2, total: 3 };
+    f.ticket('Bare', {}, [{ link: 'Lonely', original: '[[Lonely]]' }]);
+    const totals = linkedTaskTotals(f.graph());
+    expect(totals.get('Spec.md')).toEqual({ done: 3, total: 5 });
+    expect(totals.get('Other.md')).toEqual({ done: 2, total: 3 });
+    expect(totals.has('Lonely.md')).toBe(false);
+  });
+  it('keeps structuralKey and layout unchanged when only task counts or readiness change', () => {
+    const f = fixture(); f.ticket('A'); const before = f.graph(); const key = structuralKey(before); const positions = layoutGraph(before);
+    f.records['A.md']!.tasks = { done: 1, total: 4 }; f.records['A.md']!.frontmatter!.status = 'closed';
+    const after = f.graph();
+    expect(after.nodes.find(n => n.id === 'A.md')).toMatchObject({ tasks: { done: 1, total: 4 }, readiness: 'terminal' });
+    expect(structuralKey(after)).toBe(key); expect(layoutGraph(after)).toEqual(positions);
+  });
+  it('omits node task counts when a note has no checkboxes or unavailable metadata', () => {
+    const f = fixture(); f.ticket('Plain'); f.ticket('Zero'); f.records['Zero.md']!.tasks = { done: 0, total: 0 };
+    const graph = f.graph();
+    expect(graph.nodes.find(n => n.id === 'Plain.md')?.tasks).toBeUndefined();
+    expect(graph.nodes.find(n => n.id === 'Zero.md')?.tasks).toBeUndefined();
   });
 });
 describe('dependency-only deterministic layout', () => {

@@ -1,12 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Background, Controls, EdgeChangeset, Handle, MarkerType, NodeChangeset, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react';
-import { buildGraph, discoverMaps, structuralKey, ticketTypes, type Graph, type GraphNode, type NoteSource } from './model';
+import { buildGraph, discoverMaps, linkedTaskTotals, structuralKey, ticketProgress, ticketTypes, type Graph, type GraphNode, type NoteSource, type TaskCounts } from './model';
 import { layoutGraph, NODE_HEIGHT, NODE_WIDTH } from './layout';
 import { mountPreview, type PreviewServices } from './preview';
 export interface GraphAppProps { source: NoteSource; preview: PreviewServices; revision: number }
-type CanvasNode = Node<{ record: GraphNode; filtered: boolean }, 'visor'>;
+type CanvasNode = Node<{ record: GraphNode; filtered: boolean; linked?: TaskCounts }, 'visor'>;
+/** Counts are display-only: non-negative integers, done never above total, and no zero-total progress. */
+function clampedTasks(tasks?: TaskCounts): TaskCounts | undefined {
+  if (!tasks) return undefined;
+  const count = (value: number) => Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  const total = count(tasks.total);
+  return total > 0 ? { done: Math.min(count(tasks.done), total), total } : undefined;
+}
+function Meter({ done, total, text, testId, title }: TaskCounts & { text: string; testId: string; title?: string }) {
+  return <div className="visor-progress" data-testid={testId} title={title}>
+    <span className="visor-progress-bar" aria-hidden="true"><span style={{ width: `${total ? (done / total) * 100 : 0}%` }} /></span><span>{text}</span></div>;
+}
 function NoteNode({ data, selected }: NodeProps<CanvasNode>) {
   const n = data.record;
+  const own = clampedTasks(n.tasks);
+  const linked = n.kind === 'support' || n.kind === 'implementation' ? clampedTasks(data.linked) : undefined;
   return <div className={`visor-node visor-kind-${n.kind} ${n.terminal ? 'visor-terminal' : ''} ${data.filtered ? 'visor-filtered' : ''} ${selected ? 'visor-selected' : ''}`}
     data-kind={n.kind} data-readiness={n.readiness} data-title={n.title} title={n.destination?.path ?? n.title}>
     <Handle type="target" position={Position.Top} isConnectable={false} />
@@ -14,6 +27,9 @@ function NoteNode({ data, selected }: NodeProps<CanvasNode>) {
     <strong>{n.title}</strong>
     <div className="visor-types">{n.types.map(t => <span key={t} className={`visor-type-${t}`}>{t}</span>)}</div>
     {n.kind !== 'type' && <div className="visor-state">{n.unavailable ? 'Metadata indexing / unavailable' : `${n.status} · ${n.readiness}`}{n.assignee ? ` · ${n.assignee}` : ''}</div>}
+    {own ? <Meter {...own} testId="card-tasks" text={`${own.done}/${own.total}`} title="Checkboxes in this note" />
+      : linked && <Meter {...linked} testId="card-linked" text={`linked ≈ ${linked.done}/${linked.total}`}
+        title="Approximate: checkboxes in notes that link to this note (one hop, includes the map note; a note linked from several notes counts under each)" />}
     {n.folder && <div className="visor-origin">Folder: {n.folder}</div>}
     <Handle type="source" position={Position.Bottom} isConnectable={false} />
   </div>;
@@ -56,6 +72,7 @@ function Canvas({ source, preview, revision }: GraphAppProps) {
   const [map, setMap] = useState('');
   const selectedMap = discovery.maps.some(m => m.path === map) ? map : discovery.maps[0]?.path ?? '';
   const graph = useMemo(() => selectedMap ? buildGraph(source, selectedMap) : { nodes: [], edges: [], warnings: [], mapPath: '' } as Graph, [source, selectedMap, revision]);
+  const progress = useMemo(() => ticketProgress(graph), [graph]);
   const structure = structuralKey(graph); const previousStructure = useRef(''); const previousMap = useRef('');
   const [nodes, setNodes] = useState<CanvasNode[]>([]); const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
@@ -64,12 +81,12 @@ function Canvas({ source, preview, revision }: GraphAppProps) {
   const fitPending = useRef(false);
   useEffect(() => {
     const changed = previousStructure.current !== structure; previousStructure.current = structure;
-    const positions = changed ? layoutGraph(graph) : null;
+    const positions = changed ? layoutGraph(graph) : null; const linked = linkedTaskTotals(graph);
     setNodes(previous => graph.nodes.map(record => {
       const prior = previous.find(n => n.id === record.id);
       return { id: record.id, type: 'visor', position: positions?.get(record.id) ?? prior?.position ?? { x: 0, y: 0 },
         width: NODE_WIDTH, height: NODE_HEIGHT, selected: prior?.selected ?? false,
-        deletable: false, connectable: false, draggable: true, data: { record, filtered: false } };
+        deletable: false, connectable: false, draggable: true, data: { record, filtered: false, linked: linked.get(record.id) } };
     }));
     setEdges(previous => toEdges(graph).map(e => ({ ...e, selected: previous.find(p => p.id === e.id)?.selected ?? false })));
     if (previousMap.current !== graph.mapPath) { fitPending.current = true; previousMap.current = graph.mapPath; }
@@ -85,7 +102,7 @@ function Canvas({ source, preview, revision }: GraphAppProps) {
     const match = (type === 'all' || (type === 'implementation' ? r.kind === 'implementation' : type === 'support' ? r.kind === 'support' : r.types.includes(type as typeof ticketTypes[number]))) &&
       (status === 'all' || (status === 'terminal' ? r.terminal : status === 'frontier' || status === 'assigned' ? r.readiness === status : r.status.toLowerCase().trim() === status)) &&
       (!search || `${r.title} ${r.id}`.toLowerCase().includes(search.toLowerCase()));
-    return { ...n, data: { record: r, filtered: isArtifact && !match } };
+    return { ...n, data: { ...n.data, filtered: isArtifact && !match } };
   }), [nodes, type, status, search]);
   const selected = graph.nodes.find(n => n.id === selectedId);
   const reset = () => { const positions = layoutGraph(graph); setNodes(old => old.map(n => ({ ...n, position: positions.get(n.id)! }))); fitPending.current = true; };
@@ -98,6 +115,11 @@ function Canvas({ source, preview, revision }: GraphAppProps) {
       <label>Type <select aria-label="Type" value={type} onChange={e => setType(e.target.value)}><option value="all">All types</option>{ticketTypes.map(t => <option key={t}>{t}</option>)}<option value="implementation">Implementation</option><option value="support">Note / support</option></select></label>
       <label>Status <select aria-label="Status" value={status} onChange={e => setStatus(e.target.value)}>
         <option value="all">Full history</option><option value="open">Open</option><option value="terminal">Closed / done</option><option value="frontier">Frontier</option><option value="assigned">Assigned & unblocked</option></select></label>
+      {selectedMap && progress.total > 0 && <div className="visor-map-progress" aria-label="Decision progress">
+        <span data-testid="progress-summary">{progress.closed}/{progress.total} decision tickets closed{graph.warnings.some(w => w.includes('cache(s) unavailable')) ? ' (partial: some notes unreadable)' : ''}</span>
+        <span className="visor-progress-bar" role="progressbar" aria-label="Decision tickets closed" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.closed} data-testid="progress-bar"><span style={{ width: `${progress.total ? (progress.closed / progress.total) * 100 : 0}%` }} /></span>
+        <span data-testid="progress-counts">ready {progress.frontier} · assigned {progress.assigned} · blocked {progress.blocked} · unknown {progress.unknown}</span>
+      </div>}
       <button onClick={() => void flow.fitView({ padding: 0.15 })}>Fit</button><button onClick={reset}>Reset layout</button>
     </header>
     <div className="visor-legend" aria-label="Legend"><span>Filters dim nonmatches; blockers stay visible.</span>{ticketTypes.map(t => <span key={t} className={`visor-type-${t}`}>{t}</span>)}

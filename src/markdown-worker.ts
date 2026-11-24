@@ -8,7 +8,7 @@ export interface MarkdownResult { record: Omit<IndexedNote, 'id'>; body: string;
 parentPort!.on('message', ({ token, request }: { token: number; request: MarkdownRequest }) => {
   try {
     const parsed = frontmatter(request.markdown); const structure = markdownStructure(parsed.body);
-    const record = { metadata: { frontmatter: parsed.metadata, links: [...parsed.links, ...structure.links] }, headings: structure.headings, blocks: structure.blocks };
+    const record = { metadata: { frontmatter: parsed.metadata, links: [...parsed.links, ...structure.links], tasks: structure.tasks }, headings: structure.headings, blocks: structure.blocks };
     const result: MarkdownResult = { record, body: parsed.body };
     if (request.kind === 'preview') {
       const snapshot = { ...request.snapshot, notes: request.snapshot.notes.map(note => note.id === request.id ? { id: note.id, ...record } : note) };

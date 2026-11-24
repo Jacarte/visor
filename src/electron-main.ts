@@ -16,11 +16,23 @@ let index: FolderIndex | null = null;
 const bundle = __dirname;
 // Shared across window lifetimes: closing a window cannot leave a second worker pool behind.
 const markdownJobs = new MarkdownJobs(path.join(bundle, 'markdown-worker.cjs'));
+// Only the last folder path is remembered (in userData, never in a source folder); it is revalidated by FolderIndex.select on use.
+const lastFolderFile = () => path.join(app.getPath('userData'), 'last-folder.json');
+async function lastFolder(): Promise<string | null> {
+  try { const value = JSON.parse(await fs.readFile(lastFolderFile(), 'utf8'))?.folder; return typeof value === 'string' && path.isAbsolute(value) ? value : null; } catch { return null; }
+}
+async function selectFolder(folder: string) {
+  const snapshot = await index!.select(folder);
+  await fs.writeFile(lastFolderFile(), JSON.stringify({ folder })).catch(() => {});
+  return snapshot;
+}
 async function chooseFolder(): Promise<ReturnType<FolderIndex['current']>> {
   const owner = window; if (!owner || !index) throw new Error('Window unavailable');
-  const result = await dialog.showOpenDialog(owner, { title: 'Open a Wayfinder project folder', properties: ['openDirectory'] });
+  // Start in the last folder's parent: sibling folders are usually the other maps.
+  const last = await lastFolder();
+  const result = await dialog.showOpenDialog(owner, { title: 'Open a Wayfinder project folder', properties: ['openDirectory'], ...(last ? { defaultPath: path.dirname(last) } : {}) });
   if (window !== owner || owner.isDestroyed()) throw new Error('Window closed');
-  return result.canceled || !result.filePaths[0] ? index.current() : index.select(result.filePaths[0]);
+  return result.canceled || !result.filePaths[0] ? index.current() : selectFolder(result.filePaths[0]);
 }
 for (const channel of ['chooseFolder', 'getSnapshot', 'readNote', 'openExternal']) {
   ipcMain.handle(`visor:${channel}`, async (event, ...args: unknown[]) => {
@@ -79,8 +91,11 @@ async function createWindow() {
   await win.loadURL(APP_URL);
   const folderArg = process.argv.find(a => a.startsWith('--folder='));
   if (folderArg && index) {
-    try { await index.select(folderArg.slice('--folder='.length)); }
+    try { await selectFolder(folderArg.slice('--folder='.length)); }
     catch (error) { await dialog.showMessageBox(win, { type: 'error', message: 'Folder unavailable', detail: String(error) }); }
+  } else if (index) {
+    const last = await lastFolder();
+    if (last) await selectFolder(last).catch(() => {});
   }
 }
 void app.whenReady().then(async () => {

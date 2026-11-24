@@ -5,7 +5,7 @@ import type { Node } from 'unist';
 import { headingAnchor } from './links';
 export interface MarkdownNode extends Node {
   children?: MarkdownNode[]; value?: string; target?: string; alias?: string | null;
-  url?: string; identifier?: string; data?: Record<string, unknown>; depth?: number;
+  url?: string; identifier?: string; data?: Record<string, unknown>; depth?: number; checked?: boolean | null;
 }
 const parser = unified().use(remarkParse).use(remarkWikiGfm);
 export const MARKDOWN_NODE_LIMIT = 30000;
@@ -26,13 +26,15 @@ export function walkMarkdown(tree: MarkdownNode, visit: (node: MarkdownNode) => 
 }
 export function markdownStructure(body: string) {
   const headings: { text: string; anchor: string }[] = []; const blocks: string[] = []; const links: { link: string; original: string }[] = [];
-  const counts = new Map<string, number>();
+  const counts = new Map<string, number>(); const tasks = { done: 0, total: 0 };
   walkMarkdown(parseMarkdown(body), node => {
+    // Only GFM task items carry a boolean; fenced code and plain bullets stay null and are not counted.
+    if (node.type === 'listItem' && typeof node.checked === 'boolean') { tasks.total++; if (node.checked) tasks.done++; }
     if (node.type === 'heading') { const text = textOf(node); headings.push({ text, anchor: headingAnchor(text, counts) }); }
     if (node.type === 'paragraph') { const block = textOf(node).match(/(?:^|\s)\^([a-zA-Z0-9-]+)$/)?.[1]; if (block && !blocks.includes(block)) blocks.push(block); }
     if ((node.type === 'wikiLink' || node.type === 'wikiEmbed') && typeof node.target === 'string') links.push({ link: node.target, original: `${node.type === 'wikiEmbed' ? '!' : ''}[[${node.target}]]` });
   });
-  return { headings, blocks, links };
+  return { headings, blocks, links, tasks };
 }
 /** Used by the existing source-range guard before the richer parser can roll malformed aliases back. */
 export function completeWikiSpan(span: string): boolean {

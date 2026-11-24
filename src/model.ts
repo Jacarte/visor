@@ -4,7 +4,10 @@ export type TicketType = typeof ticketTypes[number];
 export interface NoteMetadata {
   frontmatter?: Record<string, unknown>;
   links: readonly { link: string; original?: string; key?: string }[];
+  /** GFM task-list items in the note body; absent when the note's metadata is unavailable. */
+  tasks?: TaskCounts;
 }
+export interface TaskCounts { done: number; total: number }
 export interface NoteSource {
   paths(): readonly string[];
   metadata(path: string): NoteMetadata | null;
@@ -16,7 +19,7 @@ export interface GraphNode {
   types: TicketType[]; status: string; terminal: boolean; assignee: string | null;
   readiness: 'frontier' | 'assigned' | 'blocked' | 'unknown' | 'terminal' | 'context';
   destination?: Destination;
-  folder?: string; parent?: string; unavailable?: boolean;
+  folder?: string; parent?: string; unavailable?: boolean; tasks?: TaskCounts;
 }
 export interface GraphEdge { id: string; source: string; target: string; kind: 'parent' | 'folder' | 'dependency' | 'context' | 'type' }
 export interface Graph { nodes: GraphNode[]; edges: GraphEdge[]; warnings: string[]; mapPath: string }
@@ -107,6 +110,7 @@ export function buildGraph(source: NoteSource, mapPath: string): Graph {
       folder: inFolder(path) ? folder || '/' : undefined,
       parent: fm?.parent === undefined ? undefined : parents.length === 1 && typeof parents[0] === 'string' ? parents[0] : 'Malformed parent metadata',
       unavailable: !meta,
+      tasks: meta?.tasks && meta.tasks.total > 0 ? meta.tasks : undefined,
       destination: destination ?? { path, linktext: path, sourcePath: mapPath } };
     nodes.set(path, node); return node;
   };
@@ -204,6 +208,32 @@ export function buildGraph(source: NoteSource, mapPath: string): Graph {
   }
   return { nodes: [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id)),
     edges: [...edges.values()].sort((a, b) => a.id.localeCompare(b.id)), warnings: [...warnings].sort(), mapPath };
+}
+export interface TicketProgress { total: number; closed: number; frontier: number; assigned: number; blocked: number; unknown: number }
+/** Decision tickets only. Closed is the terminal flag; open tickets are partitioned by readiness, so the buckets sum to total. */
+export function ticketProgress(graph: Graph): TicketProgress {
+  const progress: TicketProgress = { total: 0, closed: 0, frontier: 0, assigned: 0, blocked: 0, unknown: 0 };
+  for (const node of graph.nodes) {
+    if (node.kind !== 'ticket') continue;
+    progress.total++;
+    if (node.terminal) progress.closed++;
+    else if (node.readiness === 'frontier' || node.readiness === 'assigned' || node.readiness === 'blocked') progress[node.readiness]++;
+    else progress.unknown++;
+  }
+  return progress;
+}
+/** Approximate: sums task counts over distinct one-hop context sources; a source linked to several notes counts under each. */
+export function linkedTaskTotals(graph: Graph): Map<string, TaskCounts> {
+  const tasks = new Map(graph.nodes.map(n => [n.id, n.tasks] as const));
+  const sources = new Map<string, Set<string>>();
+  for (const e of graph.edges) if (e.kind === 'context') sources.set(e.target, (sources.get(e.target) ?? new Set()).add(e.source));
+  const totals = new Map<string, TaskCounts>();
+  for (const [target, from] of sources) {
+    let found = false; const sum = { done: 0, total: 0 };
+    for (const source of from) { const t = tasks.get(source); if (t) { found = true; sum.done += t.done; sum.total += t.total; } }
+    if (found) totals.set(target, sum);
+  }
+  return totals;
 }
 export function structuralKey(graph: Graph): string {
   return JSON.stringify([graph.mapPath, graph.nodes.map(n => [n.id, n.kind]), graph.edges.map(e => e.id)]);

@@ -31,6 +31,13 @@ it('folder-index builds real YAML/Markdown records, all artifacts and conservati
   expect((await index.readNote('Task.md', snapshot.generation)).body).not.toContain('blocked-by');
   await index.refresh(); expect(await hashes(root)).toEqual(before);
 });
+it('folder-index counts GFM task checkboxes per note, including nested and ordered items, but not fenced code or plain bullets', async () => {
+  await write('Tasks.md', '# Plan\n\n- [ ] open\n- [x] done\n  - [X] nested done\n- plain\n\n1. [ ] ordered open\n2. [x] ordered done\n\n```md\n- [ ] in code\n```\n');
+  await write('Plain.md', '# None\n\n- item');
+  const snapshot = await index.select(root);
+  expect(snapshot.notes.find(n => n.id === 'Tasks.md')?.metadata?.tasks).toEqual({ done: 3, total: 5 });
+  expect(snapshot.notes.find(n => n.id === 'Plain.md')?.metadata?.tasks).toEqual({ done: 0, total: 0 });
+});
 it('folder-index refuses private selected roots AND their absolute ancestors before crawling; skips private/symlink descendants', async () => {
   await write('Map.md', map); await write('chats/Private.md', 'secret'); await write('Javier(me) notes/Never.md', 'secret');
   const outside = path.join(temp, 'outside'); await fs.mkdir(outside); await fs.writeFile(path.join(outside, 'Secret.md'), 'OUTSIDE');

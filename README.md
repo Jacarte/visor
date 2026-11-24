@@ -6,6 +6,8 @@ A standalone, local **read-only Electron app** for Wayfinder project folders. No
 
 ![./docs/deps.png](./docs/deps.png)
 
+**Writing notes for Visor?** See [Proposal: writing Wayfinder notes that Visor reads](#proposal-writing-wayfinder-notes-that-visor-reads) and [enforcing the format for agents](docs/ENFORCING-WAYFINDER-FORMAT.md).
+
 ## Launch on this Mac
 
 Requires macOS 13+ and Node 24 for building. Dependencies and binaries are project-local and exactly locked.
@@ -17,7 +19,7 @@ nvm use 24
 npm start
 ```
 
-`npm start` builds the static application, then launches the pinned Electron runtime. Click **Open Folder…**, use **File → Open Folder…**, or press **⌘O**. Choose a project folder containing a note with `labels: wayfinder:map` (a string or YAML string list). Multiple maps appear in the Map selector. No last-folder auto-open or source-folder settings are stored. **Refresh** reindexes manually; local filesystem changes also refresh automatically.
+`npm start` builds the static application, then launches the pinned Electron runtime. Click **Open Folder…**, use **File → Open Folder…**, or press **⌘O**. Choose a project folder containing a note with `labels: wayfinder:map` (a string or YAML string list). Multiple maps appear in the Map selector. The last opened folder is reopened on launch (its path is stored in the app's user-data directory, never in the source folder), and the dialog starts in its parent so sibling maps are easy to pick; if it is gone or invalid, Visor starts empty. **Refresh** reindexes manually; local filesystem changes also refresh automatically.
 
 To install dependencies in a fresh checkout, use the same nvm setup, then `npm ci --cache .npm-cache`. If npm's script policy skips Electron's download, run `ELECTRON_CACHE="$PWD/.electron-cache" node node_modules/electron/install.js` (the installed, pinned package's own installer, not a global binary).
 
@@ -49,7 +51,90 @@ release/Visor-darwin-x64/Visor.app/Contents/MacOS/Visor --folder=/absolute/proje
 - Frontier means open, unassigned and all direct blockers closed/done. Assigned/unblocked is separate. SCC/self cycles and unknown metadata stay unknown. Dependencies outside decision membership are not recursively traversed.
 - `implementation:ticket` / `implementation-ticket` compatibility artifacts and ordinary support notes have no inferred execution readiness merely from their tag/type. Type colors, closed/done fading and dimming filters retain the existing graph semantics.
 - One-hop wiki references from map, decision and folder artifacts add context; outside references are not recursively expanded. YAML wiki references retain their field provenance; parent/blocker references are not duplicated as generic context.
+- Progress (presentation only; nothing is written back):
+  - Exact: the toolbar's "N/M decision tickets closed" and ready/assigned/blocked/unknown counts, from decision members only. Closed/done are terminal; open tickets are partitioned by readiness.
+  - Exact: each note's `done/total` checkboxes are GFM task items (`- [ ]`, `- [x]`, nested and ordered), counted from the note body; fenced code and plain bullets are not counted. A note with no checkboxes or unavailable metadata shows no progress, never `0/0`.
+  - Approximate: "linked ≈ done/total" on support and implementation cards sums checkboxes of notes that wiki-link to it (one hop from map, decision and folder artifacts). A note linked from several sources counts under each, so these totals can overlap.
 - Pan, zoom, selected nodes and temporary dragging are local UI state. Updates preserve the camera and selection. Only initial/map selection, Fit and Reset fit the camera. Nothing is written back.
+
+## Proposal: writing Wayfinder notes that Visor reads
+
+_Proposed convention for future users and agents. Visor accepts only this form; other shapes are shown as unknown or not indexed._
+
+Visor is a read-only graph viewer for Wayfinder folders. It only
+trusts explicit, machine-readable frontmatter and never guesses readiness. Write
+every Wayfinder note in exactly the form below.
+
+### Layout
+
+One folder per map: the map note at its root, tickets and other artifacts
+anywhere beneath it (`tickets/`, `specs/`, `impl-tickets/`, ...). Open the map
+folder in Visor; sibling map folders stay one level up.
+
+### Map note
+
+```yaml
+---
+title: <Map title>
+labels: [wayfinder:map]
+tags: [<project>, wayfinder]
+status: active
+---
+```
+
+### Decision ticket (research | prototype | grilling | task)
+
+```yaml
+---
+title: <Question as a title>
+labels: [wayfinder:research]     # or wayfinder:prototype | wayfinder:grilling | wayfinder:task
+parent: "[[<map-note-name>]]"    # quoted wikilink to the map; required
+status: open                     # exactly `open`, `closed` or `done`
+assignee:                        # empty = unassigned; a name = assigned
+blocked-by: []                   # always present; [] means none
+---
+```
+
+With blockers, always quote each wikilink:
+`blocked-by: ["[[t04-bulkhead-cap-design]]", "[[t05-rollout]]"]`.
+
+### Implementation ticket (a build slice, not a decision)
+
+```yaml
+---
+title: <Slice title>
+labels: [implementation:ticket]
+status: ready-for-agent          # free text; shown, never used for readiness
+blocked-by: []
+---
+```
+
+It is drawn with the ticket graph, but Visor deliberately infers no readiness
+from it. Put real dependencies in `blocked-by`, not only in the body text.
+
+### Everything else
+
+Specs, briefs, handoffs, indexes and session notes need no Wayfinder fields.
+Link them with `[[wikilinks]]` from the map or a ticket and they appear as
+context notes. Do not give them a ticket label or the tag `wayfinder-ticket`.
+
+### Rules that avoid the usual failures
+
+- Always quote YAML values that contain `:` (`title: "Agent image: tools"`);
+  an unquoted colon makes the whole note invisible to Visor.
+- `status` is exactly `open`, `closed` or `done` on decision tickets. Any other
+  value (`built-unmerged`, `active`, ...) makes the ticket and everything that
+  depends on it `unknown`. Track finer states in the body.
+- Blockers are wikilinks to notes inside the map folder. A bare slug, an
+  unquoted `[[[a]]]`, or a missing note is flagged "malformed blocker" and the
+  dependent can never show as ready.
+- `parent` points at exactly one map. Two maps in the same folder cannot be
+  told apart, so give each map its own folder.
+- `frontier` = open, unassigned, all blockers closed/done. `assigned` = same but
+  with an `assignee`. Cycles, unknown statuses and unavailable blockers make a
+  ticket `unknown`.
+
+For agent workflows, see [docs/ENFORCING-WAYFINDER-FORMAT.md](docs/ENFORCING-WAYFINDER-FORMAT.md).
 
 ## Read-only Markdown
 
